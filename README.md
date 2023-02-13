@@ -79,6 +79,204 @@ CI/CD with github, jenkins, maven, ansible and kubernetes
 ## Source Code 
 - Fork this repositoy - [Source Code](https://github.com/yankils/hello-world)
 
+# 2.CI/CD pipeline using Git, Jenkins and Maven
+
+## Setup Jenkins Server
+- Setup a Linux EC2 instance
+- Install Java
+- Install Jenkins
+- Start Jenkins
+- Access Web UI on port 8080
+1. First we need to launch an EC2 instance with Keypair
+```
+Name: Jenkins_Server
+AMI: Amazon Linux 2
+Instance type: t2.micro
+key pair login : generate a key pair and store it locally to securely connect to your instance
+Security group name: Jenkins_Security_Group
+Inbound rules: 
+type: ssh, protocol: TCP, Port range: 22
+type: Custom TCP, Protocol: TCP, Port Range: 8080
+Configure storage: 1x 8 GiB gp2 root volume
+```
+2. Connect to that instance using ssh. 
+- In terminal change the directory of folder to the directory where your key_pair.pem file is stored
+- Change the file permissions of key_pair.pem file
+```
+chmod 0400 key_pair.pem
+```
+- ssh into EC2 instance using
+```
+ssh -i key_pair.pem ec2-user@public_ipv4_address
+```
+- Become root user
+```
+sudo su -
+```
+- Run these commands to install java and jenkins
+```
+sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+
+amazon-linux-extras install epel
+amazon-linux-extras install java-openjdk11
+yum install jenkins
+```
+- Default jenkins server is inactive we need to start it 
+```
+service jenkins start
+```
+- To check whether jenkins service has started, we use
+```
+service jenkins status
+```
+- Now we can access the jenkins from web UI on port 8080 using
+```
+public_ipv4_address:8080
+```
+- To get administrator password of Jenkins use this command and paste that password in Jenkins UI
+```
+cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+- For now skip to install any plugin and click 'Start using jenkins' 
+![image](https://user-images.githubusercontent.com/56789226/218373747-384f1198-368f-4642-b878-546c6401b16a.png)
+
+##  Run 1st Jenkins Job
+- Go to `Dashboard` -> `New item`
+```
+JobName: HelloWorldJob
+Type: Free Style Project
+Build Step: Execute shell
+echo "Hello World!"
+uptime
+```
+- Apply and click Save. Now click on "Build Now" and Jenkins will build our job. To check output click on green tick mark in build history section.
+![image](https://user-images.githubusercontent.com/56789226/218374373-a7e698c1-1957-4892-ae6d-bbfbdfca9702.png)
+
+##  Integrate Git with Jenkins
+- Install Git on Jenkins Instance
+- Install GitHub Plugin on Jenkins GUI
+- Configure Git on Jenkins GUI
+
+1.Install git on jenkins server
+```
+yum install git
+```
+2.Install github plugin on jenkins GUI
+
+Click on `Manage Jenkins` -> `Manage Plugin` -> `Available Plugin` -> Search GitHub -> Choose it and click Install without Restart
+
+3.Configure git on jenkins GUI
+
+`Manage Jenkins` -> `Global Tool Configuration` -> Setup git
+```
+name: Git
+Path to Git executable: git
+```
+## Run Jenkins job to pull code from GitHub
+- Create New Item
+```
+Job Name: PullCodeFromGithub
+FreeStyleProject
+Description: Pull Code From GitHub
+Source Code Management: Git
+Repository URl: URL
+If private repository then provide credentials
+```
+- Build the job and check Console Output. Clone is successful. 
+![image](https://user-images.githubusercontent.com/56789226/218378437-25b8abf2-ce1a-4348-a550-97b60e0bff81.png)
+
+## Integrate Maven with jenkins
+- Setup Maven on jenkins server
+- Setup Environment variables (JAVA_HOME, M2, M2_HOME)
+- Install Maven Plugin on jenkins GUI
+- Configure Maven and Java on jenkins gui
+<hr>
+
+- Setup Maven on jenkins server
+
+```
+sudo su -
+cd /opt
+wget https://dlcdn.apache.org/maven/maven-3/3.9.0/binaries/apache-maven-3.9.0-bin.tar.gz
+tar -xvzf apache-maven-3.9.0-bin.tar.gz
+mv apache-maven-3.9.0 maven
+```
+
+- Setup environment variables
+
+```
+cd ~
+vi .bash_profile
+ M2_HOME=/opt/maven
+ M2=/opt/maven/bin
+ JAVA_HOME=/usr/lib/jvm/java-11-openjdk-11.0.16.0.8-1.amzn2.0.1.x86_64
+ PATH=$PATH:$HOME/bin:$JAVA_HOME:$M2_HOME:$M2
+source .bash_profile
+echo $PATH
+```
+
+To apply the changes we have made to .bash_profile, either we can logout and log back in or run `source .bash_profile` command. It will upload the changes.
+
+- Install Maven plugin on Jenkins GUI
+
+`Manage Jenkins` -> `Manage_Plugins` -> `Available Plugin` -> Search Maven and install `Maven Integration` plugin and select install without restart.
+
+- Configure Maven and Java on Jenkins GUI
+
+`Manage Jenkins` -> `Global Tool Configuration`
+
+```
+JDK
+Name: java-11
+JAVA_HOME: /usr/lib/jvm/java-11-openjdk-11.0.16.0.8-1.amzn2.0.1.x86_64
+Maven
+Name: maven-3.9
+MAVEN_HOME: /opt/maven
+```
+## Build a Java project using Jenkins
+```
+Item name: FirstMavenproject
+Type: Maven Project
+Description: First Maven Project
+Git
+Repository URL: https://github.com/yash-s-patil/hello-world.git
+Root POM: pom.xml
+Goals and options: clean install
+```
+
+Build this job and it will generate an artifact called webapp.war and stored in
+` /var/lib/jenkins/workspace/FirstMavenProject/webapp/target/webapp.war `
+
+![image](https://user-images.githubusercontent.com/56789226/218389613-e226c5c1-d1b7-4503-9698-fa4e8f1141b6.png)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
