@@ -1,4 +1,4 @@
-# CI-CD-with-Jenkins-Ansible-Docker-Kubernetes-on-AWS
+# CI/CD with Jenkins, Ansible, Docker, Kubernetes on AWS
 # 1.Introduction
 ## Tools
 - Git - Local version control system
