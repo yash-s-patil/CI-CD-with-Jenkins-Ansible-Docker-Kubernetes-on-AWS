@@ -250,19 +250,135 @@ Build this job and it will generate an artifact called webapp.war and stored in
 
 ![image](https://user-images.githubusercontent.com/56789226/218389613-e226c5c1-d1b7-4503-9698-fa4e8f1141b6.png)
 
+# 3.Integrating Tomcat server in CI/CD pipeline
+## Setup a tomcat server
+- Setup a Linux EC2 instance
+- Install java
+- Configure Tomcat
+- Start Tomcat Server
+- Access Web UI on port 8080
+<hr>
 
+- First create an EC2 instance for tomcat server
+```
+Name: Tomcat_Server
+AMI: Amazon Linux 2
+Instance type: t2.micro
+key pair login : use the already generated key pair login during setting up Jenkins_Server
+Security group name: Devops_Security_Group
+Inbound rules: 
+type: ssh, protocol: TCP, Port range: 22
+type: Custom TCP, Protocol: TCP, Port Range: 8080
+Configure storage: 1x 8 GiB gp2 root volume
+```
+- ssh into EC2 instance using
+```
+ssh -i key_pair.pem ec2-user@public_ipv4_address
+```
+- Become root user
+```
+sudo su -
+```
+- Install java
+```
+amazon-linux-extras install java-openjdk11
+```
+- Install Tomcat
+```
+cd /opt
+wget https://dlcdn.apache.org/tomcat/tomcat-9/v9.0.71/bin/apache-tomcat-9.0.71.tar.gz
+tar -xvzf apache-tomcat-9.0.71.tar.gz
+mv apache-tomcat-9.0.71 tomcat
+```
+- Now we can start our tomcat server
+```
+cd tomcat/bin/
+./startup.sh
+```
+- Now we should be able to access the tomcat server from browser using 
+```
+public_ipv4_address:8080
+```
+- When we click `Manager App` we get `403 Access Denied` error. To fix the issue we need to edit `context.xml` file.
+- Go to tomcat directory and run `find / -name context.xml` to get the location of `context.xml` file.
+```
+/opt/tomcat/webapps/examples/META-INF/context.xml
+/opt/tomcat/webapps/host-manager/META-INF/context.xml
+/opt/tomcat/webapps/manager/META-INF/context.xml
+```
+- We should update `context.xml` file under `host-manager` and `manager` directories. Currently it is only allowing access from localhost, we will comment out the part shown below in the xml. 
+```
+<!--  <Valve className="org.apache.catalina.valves.RemoteAddrValve"
+  allow="127\.\d+\.\d+\.\d+|::1|0:0:0:0:0:0:0:1" /> -->
+```
+- Once we updated those files, we need to stop and restart our tomcat server
+```
+cd tomcat/bin/
+./shutdown.sh
+./startup.sh
+```
+- Now we updated the files, we will no longer get `403 Access Denied` error but it will ask username and password in tomcat server.To find the credentials, go under tomcat/conf directory
+```
+cd tomcat/conf/
+vi tomcat-users.xml
+```
+- We will add below roles and users to the file, and save the file.
+```
+<role rolename="manager-gui"/>
+<role rolename="manager-script"/>
+<role rolename="manager-jmx"/>
+<role rolename="manager-status"/>
+<user username="admin" password="admin" roles="manager-gui, manager-script, manager-jmx, manager-status"/>
+<user username="deployer" password="deployer" roles="manager-script"/>
+<user username="tomcat" password="s3cret" roles="manager-gui"/>
+```
+- Create link files for tomcat startup.sh and shutdown.sh
+```
+ln -s /opt/tomcat/bin/startup.sh /usr/local/bin/tomcatup
+ln -s /opt/tomcat/bin/shutdown.sh /usr/local/bin/tomcatdown
+```
+- Once we update the file, we need to stop and restart our tomcat server.
+```
+tomcatdown
+tomcatup
+```
+![image](https://user-images.githubusercontent.com/56789226/218991188-17a06b23-6f38-4fc8-9962-5988dd536965.png)
 
+## Integrate Tomcat with Jenkins
+- Install "Deploy to container"
+- Configure tomcat server with credentials 
+<hr>
 
+- We can change the password for jenkins server by going to `admin` -> `Configure` and change the password and login again.
+- Install `Deploy to container` plugin in Jenkins. Go to `Manage jenkins` -> `Manage Plugins` , find the plugin under available and choose `install without restart`
+- Configure Tomcat server with credentials. Go to `Manage Jenkins` -> `Manage Credentials`. We will select `Add credentials`. We will use the credential we have added to `tomcat-user.xml` file for this step. Since these credentials will be used for deploying app, we will add `deployer` credentials which has `manager-script` role.
+```
+Kind: username with password
+username: deployer
+pwd: deployer
+```
+- Now we can create our next job with name `BuildAndDeployJob`. After build step,the artifact will get stored under `webapp/target/` directory as `webapp.war`
+```
+Kind: Maven Project
+SCM: https://github.com/yash-s-patil/hello-world.git
+Goal and options: clean install
+Post Build Actions: Deploy war/ear to a container
+WAR/EAR files: **/*.war
+Container: Tomcat 8 (even though we have install v9, this plugin is giving some issues with v9, for that reason we will use v8)
+Credentials: tomcat_deployer
+Tomcat URL: http://<Public_IP_of_Tomcat_server>:8080/
+```
+- Save and Build the job. When we go to tomcat server under `Manager App`, you will be able to see our application under `webapp/`
+![image](https://user-images.githubusercontent.com/56789226/219000238-f76a19f6-c92e-4189-8df6-30bfd4b64b8c.png)
 
-
-
-
-
-
-
-
-
-
+##  Automate build and deploy using Poll SCM
+- Whenever there is a change in the source code and that code is pushed to github, we use to manually build the job and jenkins use to deploy the code on tomcat server. But we don't want to manually execute the job. Whenever there is a change in repository it should automatically identify and execute the build job and deploy the code.
+- Go to the existing maven job `BuildAndDeployJob` and click `Configure` and in `Build Triggers` select `Poll SCM`. In the specific period of time it will go and validate whether there is a change in repository or not. If there are no changes build will not happen, if there are changes build will be executed.
+```
+Schedule: * * * * * 
+(go and check every minute if there is any change in repository and execute it) 
+```
+- Now if we make any changes in the repository, jenkins will automatically identify the changes and build the code using maven and deploy the code on a tomcat server and when you refresh the web page you can see the changes.
 
 
 
