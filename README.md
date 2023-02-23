@@ -915,22 +915,90 @@ Exec command: ansible-playbook /opt/docker/regapp.yml
 - Now when we update the source code, jenkins trigger the job, copy artifacts onto ansible, ansible create an image and deploy that image onto docker hub.
 ![image](https://user-images.githubusercontent.com/56789226/220843792-25138fc8-0274-4d1e-af01-9ba0543b7b89.png)
 
+## How to create container on dockerhost using ansible playbook
+- We will create an ansible playbook in `/opt/docker` to create a container.
+```
+vi deploy_regapp.yml
+```
+- In ansible playbook
+``` yaml
+---
+- hosts: dockerhost
+  
+  tasks:
+  - name: create container
+    command: docker run -d --name regapp_server -p 8082:8080 username/regapp:latest
+```
+- To check ansible playbook
+```
+ansible-playbook deploy_regapp.yml --check
+```
+- Login into the Docker_Host server and become root user and delete the docker images and containers
+```
+docker stop container_id
+docker rm container_id
+docker image prune -a
+chmod 777 /var/run/docker.sock
+```
+- Once we execute the ansible playbook on the ansible server, it will pull the docker image from docker hub and create a container on docker host
+```
+ansible-playbook deploy_regapp.yml
+```
+- We can access the application on the browser using `docker_host_public_ip:8082/webapp`
+![image](https://user-images.githubusercontent.com/56789226/220857138-653705c4-889c-449a-9d27-14b92c05203b.png)
+- But when we execute ansible playbook again it gives error because the `regapp_server` container name is already been used by the container.
 
+## Continuous deployment of docker container using ansible playbook
+- Remove existing container
+- Remove existing image
+- Create new container
+```
+vi deploy_regapp.yml
+```
+- Edit the ansible playbook
+``` yaml
+---
+- hosts: dockerhost
 
+  tasks:
+  - name: stop existing container
+    command: docker stop regapp_server
+    ignore_errors: yes
 
+  - name: remove the container
+    command: docker rm regapp_server
+    ignore_errors: yes
 
+  - name: remove image
+    command: docker rmi username/regapp:latest
+    ignore_errors: yes
 
+  - name: create container
+    command: docker run -d --name regapp_server -p 8082:8080 username/regapp:latest
+```
+- To check ansible playbook
+```
+ansible-playbook deploy_regapp.yml --check
+```
+- Execute ansible playbook
+```
+ansible-playbook deploy_regapp.yml
+```
 
-
-
-
-
-
-
-
-
-
-
+## Jenkins CI/CD to deploy on container using Ansible
+- We are manually executing `deploy_regapp.yml` file. Now using jenkins we will automate everything.
+- Go to the jenkins dashboard -> `Copy_Artifacts_onto_Ansible` job -> `Configure`
+```
+Exec commands:
+ansible-playbook /opt/docker/regapp.yml;
+sleep 10;
+ansible-playbook /opt/docker/deploy_regapp.yml
+```
+- Disable Poll SCM for `BuildAndDeployContainer` or else while executing our job it will create two containers.
+- Once we make changes in source code. `Copy_Artifacts_onto_Ansible` job will get trigger and build the code, create an image, push that image to dockerhub, pull the latest image from dockerhub onto dockerhost and create a container and run our application in it. 
+- Application which is in a container can be accessed from browser using `dockerhost_public_ip:8082/webapp`
+![image](https://user-images.githubusercontent.com/56789226/220859548-780f0c0e-f823-44b3-acd1-c98c46629eee.png)
+- But, whenever there are changes, we are terminating the existing container and creating new one, during this time end user is not able access the application. That is where container management system comes into picture. In next section we will leverage container management system to run our containerized application with high availability and fault tolerance.
 
 
 
