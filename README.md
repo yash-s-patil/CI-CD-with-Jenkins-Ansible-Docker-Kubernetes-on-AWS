@@ -654,6 +654,276 @@ docker run -d --name registerapp -p 8087:8080 regapp:v1
 - We will do one more change to `index.jsp` code in repository. Once we make a change in the repository, jenkins will trigger the job automatically and push the war file to the `/opt/docker` and build the Dockerfile and create an image and deploy our application onto the container and we can access it from the browser. All these process will be done in an automated way.
 ![image](https://user-images.githubusercontent.com/56789226/219847318-087e7435-e170-44a0-9a57-acd73d4fac35.png)
 
+# 5.Integrating Ansible in CI/CD pipeline
+
+## Why do we need Ansible.
+- Till now we were using Jenkins as Build and Deployment tool. Now we will use Ansible as a Deployment tool so that jenkins need not to do the administrative kind of activities. Because jenkins work more efficiently as Build tool. Along with ansible we will be using Docker Hub. In this case Jenkins will take the code from github and build artifacts with the help of maven and copy those artifacts onto the ansible server. Now it is ansible task to create image and deploy the container. Ansible with the help of Dockerfile will create a docker image and store it in Docker Hub. And finally when we execute the Ansible playbook to deploy the container, Docker host communicates with docker hub and pulls the image and create a container out of it.
+![image](https://user-images.githubusercontent.com/56789226/220830897-bff1dd40-602e-4336-b352-b13a79c938d2.png)
+
+## Ansible Installation
+- Setup EC2 Instance
+- Setup hostname
+- Create ansadmin user
+- Add user to sudoers file so that ansadmin user will get administrative privileges.
+- Generate ssh keys
+- Enable password based login
+- Install ansible
+<hr>
+
+- First we need to launch an EC2 instance with Keypair 
+```
+Name: Ansible_Server
+AMI: Amazon Linux 2
+Instance type: t2.micro
+key pair login : use the already generated key pair login during setting up Jenkins_Server
+Security group name: Devops_Security_Group
+```
+- ssh into EC2 instance using
+```
+ssh -i key_pair.pem ec2-user@public_ipv4_address
+```
+- Become root user
+```
+sudo su -
+```
+- Change the host name and then ssh again to the server.And go back to root user
+```
+vi /etc/hostname
+ ansible-server
+init 6
+sudo su -
+```
+- Create a new user
+```
+useradd ansadmin
+```
+- Set password for ansadmin user
+```
+passwd ansadmin
+```
+- Add this user to the sudoers file
+```
+visudo 
+ ansadmin ALL=(ALL)    NOPASSWD: ALL
+```
+- We will enable password based authentication and reload service
+```
+vi /etc/ssh/sshd_config
+ PasswordAuthentication yes
+ #PasswordAuthentication no
+service sshd reload
+```
+- Create keys for ansadmin user
+```
+sudo su - ansadmin
+ssh-keygen
+```
+- Install Ansible
+```
+sudo su -
+amazon-linux-extras install ansible2
+```
+##  Integrate Docker with Ansible
+- We will add Docker host to ansible as a managed node, so that ansible control node can manage our docker host.
+- On the docker host we need to
+1. Create ansadmin
+2. Add ansadmin to sudoers file
+3. Enable password based login
+- On the Ansible Node
+1. Add docker host IP address in the host file
+2. Copy ssh keys
+3. Test connection
+
+- On the docker host system
+```
+sudo su -
+useradd ansadmin
+passwd ansadmin
+visudo 
+  ansadmin ALL=(ALL)  NOPASSWD: ALL
+  :wq
+# Password based login already enabled no need to enable again
+```
+- On the ansible server
+- Add the docker host as a managed node
+```
+vi /etc/ansible/hosts
+  delete everything and add docker_host private ip address
+```
+- Switch to ansadmin user and copy the key to the docker host 
+```
+sudo su - ansadmin
+cd .ssh
+ssh-copy-id private_ip_docker_host
+```
+- To check whether ansible server is successfully connected to the docker host we will use the following command. If in the output it shows success then it is successfully connected.
+```
+ansible all -m ping 
+```
+
+## Integrate Ansible with jenkins 
+- Go to jenkins server, `Manage jenkins` -> `Configure system`. We need to add below information under `Publish over SSH`.
+```
+Name: ansible-server
+Hostname: private_ip_of_ansible_server
+username: ansadmin
+Enable user authentication
+password:
+```
+- Now we can create our Jenkins job
+```
+Name: Copy_Artifacts_onto_Ansible
+Copy from: BuildAndDeployContainer
+deselect the POLL SCM for now
+Post-Build actions:
+SSH Server: ansible-server
+Remote directory: //opt//docker
+Delete Exec command
+```
+- But in ansible-server we don't have `/opt/docker` directory, so we need to create one. And then save and build the jenkins job. Once we build the job, Jenkins will build the code using maven and deploy the war file onto the ansible server `/opt/docker` directory.
+```
+sudo su - ansadmin
+cd /opt
+sudo mkdir docker
+sudo chown ansadmin:ansadmin docker
+```
+## Build an image and create container on Ansible
+- On the ansible server install docker 
+```
+sudo yum install docker -y
+```
+- Add the ansadmin to docker group
+```
+sudo usermod -aG docker ansadmin
+```
+- Start the docker services
+```
+sudo service docker start
+```
+- To create a docker image we need to create a Dockerfile and build that Dockerfile
+```
+cd /opt/docker
+vi Dockerfile
+  FROM tomcat:latest
+  RUN cp -R /usr/local/tomcat/webapps.dist/* /usr/local/tomcat/webapps
+  COPY ./*.war /usr/local/tomcat/webapps
+sudo chmod 777 /var/run/docker.sock 
+docker build -t regapp:v1 .
+```
+- Create a container from docker image and run it in terminal. 
+```
+docker run -t --name regapp_server -p 8081:8080 regapp:v1
+```
+- Now we can access the application on the browser using `ansible_public_address:8081/webapp/`.Till now we were executing the commands manually on ansible, now we will create an ansible playbook and do all these activities through playbook.
+
+## Ansible playbook to create image and container
+
+- On the ansible server
+```
+sudo su - ansadmin
+cd /opt/docker
+```
+- We want to execute the ansible playbook on the ansible server, so we need to add the private IP of ansible server in /etc/ansible/hosts which is a inventory file.
+```
+sudo vi /etc/ansible/hosts
+  [dockerhost]
+  private_ip_dockerhost 
+  [ansible]
+  private_ip_ansible_server
+```
+- We need to copy the ssh key on the ansible server itself to communicate with it through playbook
+```
+ssh-copy-id private_ip_ansible_server
+```
+- We will go inside `/opt/docker` and create an ansible playbook there.
+```
+cd /opt/docker
+vi regapp.yml
+```
+- In ansible playbook
+``` yaml
+---
+- hosts: ansible
+  
+  tasks:
+  - name: create docker image
+    command: docker build -t regapp:latest .
+    args:
+      chdir: /opt/docker
+```
+- To check the ansible playbook we will use
+```
+ansible-playbook regapp.yml --check
+```
+- To execute ansible playbook
+```
+ansible-playbook regapp.yml
+```
+- This is how we can create docker image using ansible playbook
+
+## Copy image on to docker hub 
+- Create an account on docker hub
+- To login to docker hub from ansible server use
+```
+docker login
+Username:
+password:
+```
+- To push the image onto to the docker hub
+```
+docker tag image_id username/regapp:latest
+docker push username/regapp:latest
+```
+
+## Jenkins job to build an image onto ansible
+- On the ansible server in `/opt/docker` directory
+```
+vi regapp.yml
+```
+- Edit the `regapp.yml` file to add two more task. Tagging and pushing the image onto the dockerhub
+``` yaml
+---
+- hosts: ansible
+
+  tasks:
+  - name: create docker image
+    command: docker build -t regapp:latest .
+    args:
+      chdir: /opt/docker
+        
+  - name: create tag to push image onto dockerhub
+    command: docker tag regapp:latest username/regapp:latest
+      
+  - name: push docker image
+    command: docker push username/regapp:latest
+```
+- Check the ansible playbook using 
+```
+ansible-playbook regapp.yml --check
+```
+- To execute the ansible playbook only on ansible server even if many IP address exist in ansible group, we will use
+```
+ansible-playbook regapp.yml --limit ansible_server_private_ip
+```
+- We can give above command to jenkins server, so jenkins server will initiate ansible playbook whenever there is a new code commit.
+- In the `Copy_Artifacts_onto_Ansible` job go to `Configure`
+```
+Poll SCM : * * * * *
+ssh-server: ansible_server
+Exec command: ansible-playbook /opt/docker/regapp.yml
+```
+- Now when we update the source code, jenkins trigger the job, copy artifacts onto ansible, ansible create an image and deploy that image onto docker hub.
+![image](https://user-images.githubusercontent.com/56789226/220843792-25138fc8-0274-4d1e-af01-9ba0543b7b89.png)
+
+
+
+
+
+
+
+
+
+
 
 
 
