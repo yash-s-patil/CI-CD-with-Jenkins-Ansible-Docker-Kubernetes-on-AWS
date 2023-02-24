@@ -1,4 +1,4 @@
-# Devops Project: CI/CD with Jenkins, Ansible, Docker, Kubernetes on AWS
+# Devops Project: Automated CI/CD Pipeline for Web Applications using GitHub, Jenkins, Maven, Ansible, Docker, and Kubernetes on AWS
 # 1.Introduction
 ## Tools
 - Git - Local version control system
