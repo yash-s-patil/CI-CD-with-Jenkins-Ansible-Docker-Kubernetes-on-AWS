@@ -1000,6 +1000,246 @@ ansible-playbook /opt/docker/deploy_regapp.yml
 ![image](https://user-images.githubusercontent.com/56789226/220859548-780f0c0e-f823-44b3-acd1-c98c46629eee.png)
 - But, whenever there are changes, we are terminating the existing container and creating new one, during this time end user is not able access the application. That is where container management system comes into picture. In next section we will leverage container management system to run our containerized application with high availability and fault tolerance.
 
+# 6.Kubernetes on AWS
+
+## Why Kubernetes 
+- Till now we are able to deploy our application successfully on a docker container. But if our docker container goes down there is no way to recover it. To overcome this problem we can use container management service called kubernetes. We will deploy our application as pod on kubernetes environment. 
+
+## Setup bootstrap server for eksctl
+- We will setup bootstrap image to create cluster
+- Create an EC2 instance
+```
+Name: EKS_Bootstrap_server
+AMI: Amazon Linux 2
+Instance type: t2.micro
+key pair login : use the already generated key pair login during setting up Jenkins_Server
+Security group name: Devops_Security_Group
+```
+- ssh into the EC2 instance and become root user
+```
+ssh -i key_pair.pem ec2-user@public_ipv4_address
+sudo su -
+```
+- Install the latest AWS CLI
+```
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+```
+- Install kubectl
+```
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.21.14/2023-01-30/bin/linux/amd64/kubectl
+```
+- Add execution permission to kubectl
+```
+chmod +x kubectl
+```
+- Move kubectl to `/usr/local/bin`
+```
+mv kubectl /usr/local/bin
+```
+- Install eksctl and move it to `/usr/local/bin`
+```
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+cd /tmp
+mv eksctl /usr/local/bin
+```
+- Create an IAM role and attach it to EC2 instance.
+- Search `IAM` click on `Roles` and select `Create role`.
+```
+Trusted entity type: AWS service
+Common use cases: EC2
+Add permissions:
+AmazonEC2FullAccess
+AWSCloudFormationFullAccess
+IAMFullAccess
+AdministratorAccess (not recommended)
+Role name: eksctl_role
+```
+- Add this role to EC2 instance `EKS_Bootstrap_server`. Got to `Actions` -> `Security` -> `Modify IAM`  and select `eksctl_role`.
+
+## Setup Kubernetes using eksctl
+- Setup kubernetes cluster on EKS
+```
+cd /tmp
+eksctl create cluster --name valaxy \
+--region ap-south-1 \
+--node-type t2.small
+```
+- Two t2.small instances have been created 
+- To check nodes
+```
+kubectl get nodes
+```
+- To check all the resources
+```
+kubectl get all
+```
+- To create pod
+```
+kubectl run webapp --image=httpd
+```
+- To check pod
+```
+kubectl get pod
+```
+- We have created a pod using kubectl run command. But in actual scenario we will use manifest file. We will see how to create resources with the help of manifest file.
+
+## Run Kubernetes basic commands
+- Example - Deploy Nginx Container
+```
+kubectl create deployment demo-nginx --image=nginx --replicas=2 --port=80
+```
+- To check deployment
+```
+kubectl get deployment
+```
+- Expose the deployment as service. This will create an ELB in front of those 2 containers and allow us to publicly access them
+```
+kubectl expose deployment demo-nginx --port=80 --type=LoadBalancer
+```
+- We can access the nginx application from browser using `EXTERNAL-IP` which can be accessed using `kubectl get service`
+- We have deployed our application through command line, but we should use manifest file, which we will see in next section.
+
+## Create 1st manifest file
+- First delete deployment (deletes pods and replicaset as well) and service
+```
+kubectl delete deployment demo-nginx
+kubectl delete service/demo-nginx
+```
+- Create manifest file
+```
+vi pod.yml
+```
+- In manifest file create pod, and run container in it on port 80
+``` yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-pod
+# labels:
+#   app: demo-app
+
+spec:
+  containers:
+    - name: demo-nginx
+      image: nginx
+      ports:
+        - name: demo-nginx
+          containerPort: 80
+```
+
+##  Create a service manifest file
+- To expose our pod we need to create a service
+```
+vi service.yml
+```
+- In service file expose the pod on port 80
+``` yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-service
+
+spec:
+  ports:
+  - name: nginx-port
+    port: 80
+    targetPort: 80
+      
+  type: LoadBalancer
+```
+- To create a pod with the help of manifest file we use the following command
+```
+kubectl apply -f pod.yml
+```
+- To create a service with the help of manifest file 
+```
+kubectl apply -f service.yml
+```
+- If we use External-IP in the browser it will not work because the instances are out of service, as service don't know where the request should be forwarded. We will use labels and selectors so that it knows which pod to forward the request to.
+- In pod.yml manifest file add labels
+``` yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-pod
+  labels:
+    app: demo-app
+
+spec:
+  containers:
+    - name: demo-nginx
+      image: nginx
+      ports:
+        - name: demo-nginx
+          containerPort: 80
+```
+- In service.yml add selector with the same label name which we used in pod.yml so it knows which pod to forward the request.
+``` yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-service
+
+spec:
+  ports:
+  - name: nginx-port
+    port: 80
+    targetPort: 80
+
+  selector:
+    app: demo-app
+
+  type: LoadBalancer
+```
+- Update the pod.yml and service.yml manifest file
+```
+kubectl apply -f pod.yml
+kubectl apply -f service.yml
+```
+- Now if we use the `EXTERNAL-IP` in the browser we can see nginx page.
+![image](https://user-images.githubusercontent.com/56789226/221411681-021600db-e8d7-40c5-bd99-a0ac9943c085.png)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
