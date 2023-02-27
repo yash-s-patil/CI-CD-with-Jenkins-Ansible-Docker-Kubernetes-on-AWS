@@ -1201,9 +1201,285 @@ kubectl apply -f service.yml
 - Now if we use the `EXTERNAL-IP` in the browser we can see nginx page.
 ![image](https://user-images.githubusercontent.com/56789226/221411681-021600db-e8d7-40c5-bd99-a0ac9943c085.png)
 
+# 7.Integrating Kubernetes in CI/CD pipeline
 
+## Write a deployment file
+- We will first delete the existing pod and service
+```
+kubectl delete pod demo-pod
+kubectl delete service/demo-service
+```
+- If the pod gets deleted or terminated there is no way it is going to recreate by default. How to overcome this problem? We need to use deployment in manifest file.
 
+## Use deployment and service files to create and access pod
+- Create a deployment file
+```
+vi regapp-deployment.yml
+```
+- In the deployment file 
+``` yaml
+apiVersion: apps/v1 
+kind: Deployment
+metadata:
+  name: valaxy-regapp
+  labels: 
+     app: regapp
 
+spec:
+  replicas: 3 
+  selector:
+    matchLabels:
+      app: regapp
+
+  template:
+    metadata:
+      labels:
+        app: regapp
+    spec:
+      containers:
+      - name: regapp
+        image: username/regapp
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+```
+- Create a service file
+```
+vi regapp-service.yml
+```
+- In service file
+``` yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: valaxy-service
+  labels:
+    app: regapp 
+spec:
+  selector:
+    app: regapp 
+
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+  type: LoadBalancer
+```
+- To create pod, deployment and replica set from deployment file use
+```
+kubectl apply -f regapp-deployment.yml
+```
+- To execute service file and expose the pods using LoadBalancer we use 
+```
+kubectl apply -f regapp-service.yml
+```
+- Now if we use  `EXTERNAL-IP:8080/webapp` we can access our application. We have successfully deployed our application on pods.
+- If we terminate a pod it can automatically provision a new pod because the replicaset makes sure that desired state of pod is running.
+- But we are executing kubectl command manually, now we will integrate kubernetes with ansible so that ansible playbook can execute kubectl commands automatically when we want to deploy our latest application on Kubernetes cluster.
+
+## Integrate Kubernetes bootstrap server with Ansible 
+1. **On the bootstrap server**
+- Create ansadmin
+- Add ansadmin to sudoers files
+- Enable password based login
+<br>
+
+2. **On the ansible server**
+- Add bootstrap server to host file
+- copy ssh keys
+- Test the connection
+<br>
+
+- In the ansible server
+- ssh into the ansible server
+```
+ssh -i key_pair.pem ec2-user@public_ipv4_address
+```
+- On the bootstrap server create ansadmin user and add him to sudoers file
+```
+useradd ansadmin
+passwd ansadmin
+visudo
+  ansadmin ALL=(ALL)   NOPASSWD: ALL
+```
+- Enable password based authentication
+```
+vi /etc/ssh/sshd_config
+  PasswordAuthentication yes
+  #PasswordAuthentication no
+```
+- Reload the service
+```
+service sshd reload
+```
+- Go back to the ansible server
+```
+sudo su -
+sudo su - ansadmin
+cd /opt/docker
+mv regapp.yml create_image_regapp.yml
+```
+- In the `deploy_regapp.yml` host is dockerhost because we were deploying container on dockerhost. Now the host will change because we are going to deploy it on kubernetes as a pod. We will change the yml file name so that it is more meaningful
+```
+mv deploy_regapp.yml docker_deployment.yml
+```
+- Add bootstrap image to host file
+```
+vi hosts
+  [kubernetes]
+  bootstrap_server_private_ip
+  [ansible]
+  ansible_server_private_ip
+```
+- copy ssh-id to bootstrap_server
+```
+ssh-copy-id bootstrap_server_private_ip
+```
+- To check
+```
+ansible -i hosts all -a uptime
+```
+
+## Create ansible playbooks for deploy and service file
+- In the ansible server create ansible playbook to execute deployment and service file
+- Create ansible playbook to execute deployment file
+```
+vi kube_deploy.yml
+```
+- In this file 
+``` yaml
+---
+- hosts: kubernetes
+# become: true
+  user: root  
+
+  tasks:
+  - name: deploy regapp on kubernetes
+    command: kubectl apply -f regapp-deployment.yml
+```
+- Create ansible playbook to execute service file
+```
+vi kube_service.yml
+```
+- In this file
+``` yaml
+---
+- hosts: kubernetes
+# become: true
+  user: root
+  
+  tasks:
+  - name: deploy regapp on kubernetes
+    command: kubectl apply -f regapp-service.yml
+```
+- Before executing ansible-playbook in the bootstrap_server delete service, deployment
+```
+kubectl delete -f regapp-service.yml
+kubectl delete -f regapp-deployment.yml
+```
+- In the ansible server execute playbook
+```
+ssh-copy-id root@bootstrap_server
+ansible-playbook -i /opt/docker/hosts kube_deploy.yml
+ansible-playbook -i /opt/docker/hosts kube_service.yml
+```
+- Once we execute these playbooks deployment, pod and service is created.
+
+## Create jenkins deployment job for Kubernetes
+- Create a new job
+```
+Item name: Deploy_On_Kubernetes
+Freestyle Project
+Description: Deploy On Kubernetes
+Post Build Actions: Send build artifacts over ssh
+Name: ansible-server
+Exec commad:
+ansible-playbook -i /opt/docker/hosts /opt/docker/kube_deploy.yml;
+ansible-playbook -i /opt/docker/hosts /opt/docker/kube_service.yml
+```
+- If we build the job, it will initialize the ansible-playbook on the ansible server and ansible is going to initialize the deployment as well as service file of kubernetes cluster.
+- Instead of running two different playbook we can merge it in one.
+```
+vi kube_deploy.yml
+```
+- In this file
+``` yaml
+---
+- hosts: kubernetes
+# become: true
+  user: root
+
+  tasks:
+  - name: deploy regapp on kubernetes
+    command: kubectl apply -f regapp-deployment.yml
+
+  - name: create service for regapp
+    command: kubectl apply -f regapp-service.yml
+```
+- Accordingly change Exec commands in Jenkins job
+```
+Exec command:
+ansible-playbook -i /opt/docker/hosts /opt/docker/kube_deploy.yml;
+```
+
+## CI Job to create Image for Kubernetes.
+- Our intention is to update the docker image by changing the source code, so that the kubernetes should deploy with latest code.
+- Rename `Deploy_On_Kubernetes` job to `RegApp_CD_Job`
+- Create CI job so that when code is changed, it will build the code and create docker image on ansible and push that docker image to dockerhub.
+```
+Item Name: RegApp_CI_Job
+Copy from: Copy_Artifacts_onto_Ansible
+Description: Build code with help of maven and create an image on ansible and push it onto dockerhub
+Exec commands: 
+ansible-playbook /opt/docker/create_image_regapp.yml;
+```
+- Disable Poll SCM for `Copy_Artifacts_onto_Ansible`
+- Now when we make changes in the source code,  the ansible playbook is executed, docker image is created on ansible server and that image is pushed to docker hub.
+
+##  Enabling rolling update to create pod from latest docker image
+- In the CI job there is option to initialize another jenkins job(CD job). So once CI job is executed CD job will take that latest docker image and do the deployment on kubernetes.
+- Go to the `RegApp_CI_Job` -> `Configure`
+```
+Add Post Build Action: Build other project
+Projects to build: RegApp_CD_Job
+Trigger only if Build is stable
+```
+- So once CI job is executed, then CD job will execute successfully. But once we make changes in the source code, latest docker image is pushed successfully onto docker hub. But new deployment is not created in kubernetes cluster.
+- We need to add rollout restart command in `kube_deploy.yml` file
+- In the ansible server go to `kube_deploy.yml` file and make this changes
+``` yaml
+---
+- hosts: kubernetes
+# become: true
+  user: root
+
+  tasks:
+  - name: deploy regapp on kubernetes
+    command: kubectl apply -f regapp-deployment.yml
+
+  - name: create service for regapp
+    command: kubectl apply -f regapp-service.yml
+      
+  - name: update deployment with new pods if image update in docker hub
+    command: kubectl rollout restart deployment.apps/valaxy-regapp
+```
+
+## Complete CI and CD job to build and deploy code on Kubernetes
+- Finally our entire CI/CD pipeline is setup. Now whenever we commit the new code onto github, Jenkins CI job pull the code, builds it and pushes the war file onto the ansible server and a docker image is created. That docker image is pushed onto the docker hub. Then CD job starts executing. And rolling update starts and new pods are created in kubernetes cluster. We can access the latest application using `External-IP:8080/webapp` in our browser.
+![image](https://user-images.githubusercontent.com/56789226/221557047-943145f6-4d1d-402e-b3c8-f98625b4fd02.png)
+
+## Clean up kubernetes cluster
+```
+kubectl delete deployment.apps/valaxy-regapp
+kubectl delete service/valaxy-service
+eksctl delete cluster valaxy --region ap-south-1
+terminate all the instances
+```
 
 
 
